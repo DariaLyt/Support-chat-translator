@@ -6,7 +6,9 @@ The scorecard is three numbers: whether the meaning survived, the latency, and t
 
 ## Status
 
-This repository holds the plan. Code follows the roadmap below, in that order.
+The service boots. `GET /health` returns ok, and Docker Compose starts the API, Postgres, and Redis. GitHub Actions runs the tests on every push.
+
+Next: the model interface and `POST /translate`.
 
 ## What this project includes
 
@@ -89,22 +91,27 @@ docker-compose.yml
 
 ## Run
 
-Commands land here with the first runnable slice. The intended start is:
-
 ```bash
-cp .env.example .env   # API key stays local
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest
+
+cp .env.example .env   # API key stays local; the skeleton boots without one
 docker compose up --build
 ```
 
-Secrets stay in `.env`. That file is gitignored.
+`GET http://localhost:8000/health` returns `{"status": "ok"}`.
+
+Secrets stay in `.env`. That file is gitignored. The database password in Compose is for this local stack only.
 
 ## Roadmap
 
-1. **Skeleton.** FastAPI app, settings, Dockerfile, and Compose for the API, Postgres, and Redis. Health check, plus a test that the app boots.
+1. **Skeleton.** Done. FastAPI app, settings, Dockerfile, and Compose for the API, Postgres, and Redis. Health check, plus a test that the app boots.
 2. **Model interface.** One interface for the completion call, a fake implementation for tests, and one real client that can target two configured models. `POST /translate` uses the interface. Detection sits in front of the call.
 3. **Postgres.** Persist original text, translation, model name, latency, token count, and estimated cost.
 4. **Redis.** Cache key is model, source language, target language, and text. Short TTL. A hit returns the stored translation and skips the model.
 5. **Metrics.** Prometheus request count, latency histogram, and cost counter, labeled by model. Scrape config in Compose.
 6. **Labeled messages.** About 30 hand-written messages with reference translations and the strings that must not change.
 7. **Evaluation.** Run both models on those messages. Score meaning, latency, and cost. Write the comparison table into this README.
-8. **CI.** GitHub Actions runs the tests on every push.
+8. **CI.** Done. GitHub Actions runs the tests on every push.
