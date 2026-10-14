@@ -6,9 +6,9 @@ The scorecard is three numbers: whether the meaning survived, the latency, and t
 
 ## Status
 
-`POST /translate` detects the language, calls the model through one interface, stores the call in Postgres, and caches the translation in Redis. A repeated sentence within the cache window skips the model. Tests use a fake model, so CI does not call a provider. The database test runs against Postgres and the cache test runs against Redis, including in GitHub Actions. Docker Compose still starts the API, Postgres, and Redis.
+`POST /translate` detects the language, calls the model through one interface, stores the call in Postgres, and caches the translation in Redis. Prometheus counts requests, latency, and estimated cost for each model. A repeated sentence within the cache window skips the model. Tests use a fake model, so CI does not call a provider. The database test runs against Postgres and the cache test runs against Redis, including in GitHub Actions. Docker Compose starts the API, Postgres, Redis, and Prometheus.
 
-Next: Prometheus metrics for request count, latency, and cost per model.
+Next: about 30 labeled support messages.
 
 ## What this project includes
 
@@ -144,13 +144,25 @@ Cached translations live in Redis under keys that start with `translate:`. List 
 docker compose exec redis redis-cli --scan --pattern 'translate:*'
 ```
 
+## Metrics
+
+`GET /metrics` exposes three series, labeled by model:
+
+- `translation_requests_total`
+- `translation_latency_seconds`
+- `translation_cost_usd_total`
+
+These are the same signals DataDog would show in production. Prometheus scrapes them in this project. A cache hit still counts as a request, with zero added cost.
+
+With the stack running, open [http://localhost:9090](http://localhost:9090) and query `translation_requests_total`. The raw series are also at [http://localhost:8000/metrics](http://localhost:8000/metrics).
+
 ## Roadmap
 
 1. **Skeleton.** Done. FastAPI app, settings, Dockerfile, and Compose for the API, Postgres, and Redis. Health check, plus a test that the app boots.
 2. **Model interface.** Done. One interface for the completion call, a fake implementation for tests, and one real client that can target two configured models. `POST /translate` uses the interface. Detection sits in front of the call.
 3. **Postgres.** Done. Each successful call stores the original text, the translation, the source and target languages, the model name, latency, input and output token counts, and estimated cost.
 4. **Redis.** Done. The cache key is a hash of the model, source language, target language, and text. The TTL is one hour by default. A hit returns the stored translation and skips the model.
-5. **Metrics.** Prometheus request count, latency histogram, and cost counter, labeled by model. Scrape config in Compose.
+5. **Metrics.** Done. Prometheus request count, latency histogram, and cost counter, labeled by model. Scrape config in Compose.
 6. **Labeled messages.** About 30 hand-written messages with reference translations and the strings that must not change.
 7. **Evaluation.** Run both models on those messages. Score meaning, latency, and cost. Write the comparison table into this README.
 8. **CI.** Done. GitHub Actions runs the tests on every push.

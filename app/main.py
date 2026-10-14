@@ -3,7 +3,8 @@
 from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
+from prometheus_client import CONTENT_TYPE_LATEST
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -13,6 +14,7 @@ from app.db import PostgresTranslationStore, TranslationRecord, TranslationStore
 from app.detection import LinguaDetector, LanguageDetectorProtocol
 from app.llm.base import LanguageModel
 from app.llm.openai_client import OpenAICompatibleClient
+from app.metrics import TranslationMetrics
 from app.translate import Translation, TranslationError, translate_message
 
 
@@ -61,6 +63,7 @@ def create_app(
     detector: LanguageDetectorProtocol | None = None,
     store: TranslationStore | None = None,
     cache: TranslationCache | None = None,
+    metrics: TranslationMetrics | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     language_model = language_model or OpenAICompatibleClient(
@@ -70,6 +73,7 @@ def create_app(
     detector = detector or LinguaDetector()
     store = store or PostgresTranslationStore(settings.database_url)
     cache = cache or RedisTranslationCache(settings.redis_url)
+    metrics = metrics or TranslationMetrics()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -81,10 +85,15 @@ def create_app(
     app.state.language_model = language_model
     app.state.store = store
     app.state.cache = cache
+    app.state.metrics = metrics
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         return HealthResponse(status="ok")
+
+    @app.get("/metrics")
+    def scrape() -> Response:
+        return Response(content=metrics.render(), media_type=CONTENT_TYPE_LATEST)
 
     @app.post("/translate", response_model=TranslateResponse)
     def translate(body: TranslateRequest) -> TranslateResponse:
@@ -107,6 +116,11 @@ def create_app(
             raise HTTPException(
                 status_code=503, detail="Could not store the translation."
             ) from exc
+        metrics.record(
+            model=result.model,
+            latency_ms=result.latency_ms,
+            cost_usd=result.estimated_cost_usd,
+        )
         return _response(result)
 
     return app
