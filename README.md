@@ -8,7 +8,7 @@ The scorecard is three numbers: whether the meaning survived, the latency, and t
 
 `POST /translate` detects the language, calls the model through one interface, stores the call in Postgres, and caches the translation in Redis. Prometheus counts requests, latency, and estimated cost for each model. A repeated sentence within the cache window skips the model. Tests use a fake model, so CI does not call a provider. The database test runs against Postgres and the cache test runs against Redis, including in GitHub Actions. Docker Compose starts the API, Postgres, Redis, and Prometheus.
 
-Next: run `python -m eval.score` with `LLM_API_KEY` set. That command fills the comparison table below.
+`python -m eval.score` runs both configured models across the 30 labeled messages and writes the comparison table below.
 
 ## What this project includes
 
@@ -78,7 +78,8 @@ Meaning is a pass or fail per message. A translation passes when every required 
 
 | Model | Meaning | Median latency | p95 latency | Mean cost | Total cost |
 | --- | --- | --- | --- | --- | --- |
-| _filled by the evaluation script_ | | | | | |
+| openai/gpt-oss-20b | 16/30 | 554 ms | 908 ms | $0.000051 | $0.001537 |
+| openai/gpt-oss-120b | 13/30 | 612 ms | 1107 ms | $0.000087 | $0.002618 |
 
 ## Stack
 

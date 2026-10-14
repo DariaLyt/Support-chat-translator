@@ -26,7 +26,7 @@ class _DownRedis:
 def test_repeat_call_is_served_from_redis() -> None:
     settings = Settings(cache_ttl_seconds=600)
     cache = RedisTranslationCache(settings.redis_url)
-    key = cache_key("gpt-4.1-mini", "fi", "en", _TEXT)
+    key = cache_key(settings.model_a_name, "fi", "en", _TEXT)
     cache.delete(key)
     model = FakeLanguageModel(
         translation="The order is late", input_tokens=12, output_tokens=4
