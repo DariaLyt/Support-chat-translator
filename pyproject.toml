@@ -11,11 +11,12 @@ dependencies = [
   "fastapi>=0.115",
   "uvicorn>=0.32",
   "pydantic-settings>=2.6",
+  "httpx2>=2.0",
+  "lingua-language-detector>=2.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "httpx2>=2.0",
   "pytest>=8.3",
 ]
 

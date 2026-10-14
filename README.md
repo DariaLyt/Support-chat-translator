@@ -6,9 +6,9 @@ The scorecard is three numbers: whether the meaning survived, the latency, and t
 
 ## Status
 
-The service boots. `GET /health` returns ok, and Docker Compose starts the API, Postgres, and Redis. GitHub Actions runs the tests on every push.
+`POST /translate` detects the language, calls the model through one interface, and returns the translation with token counts and estimated cost. Tests use a fake model, so CI does not call a provider. `cached` stays false until Redis is wired. The API, Postgres, and Redis still start with Docker Compose, and GitHub Actions runs the tests on every push.
 
-Next: the model interface and `POST /translate`.
+Next: store each call in Postgres.
 
 ## What this project includes
 
@@ -36,13 +36,29 @@ Docker Compose is the deployment shown here. Kubernetes stays out of this repo: 
 }
 ```
 
-`source_language` is `auto` when the service should detect the language, or a language code (`fi`, `en`) when the caller already knows it.
+`source_language` is `auto` when the service should detect the language, or a language code (`fi`, `en`) when the caller already knows it. Optional `model` selects one of the two configured models. When it is omitted, the service uses `MODEL_A_NAME`.
 
-The response includes the detected source language, the translation, the model name, latency in milliseconds, input and output token counts, estimated cost in USD, and whether the reply came from the cache.
+```json
+{
+  "source_language": "fi",
+  "target_language": "en",
+  "translation": "Order #48291 is late, address Mannerheimintie 12",
+  "model": "gpt-4.1-mini",
+  "latency_ms": 840,
+  "input_tokens": 42,
+  "output_tokens": 18,
+  "estimated_cost_usd": 0.0000456,
+  "cached": false
+}
+```
+
+The sample translation above shows the response shape. A live call fills those fields from the model.
+
+If the detected language and the target language are the same, the original text is returned, the model is not called, and the token counts and cost are zero. `cached` is false until the Redis step.
 
 ## Cost
 
-Each model has a configured price per million input tokens and per million output tokens, taken from that provider's published rates. The estimate stored on the call is:
+Each model has a configured price per million input tokens and per million output tokens. The defaults are OpenAI's standard rates for `gpt-4.1-mini` and `gpt-4.1` as published in October 2026: $0.40 / $1.60 and $2.00 / $8.00 per million tokens. Cached-input and batch rates are separate and are not used. Change the values in `.env` if the price page changes, or if you point the client at another provider. The estimate for a call is:
 
 ```text
 (input_tokens * input_price + output_tokens * output_price) / 1_000_000
@@ -103,12 +119,20 @@ docker compose up --build
 
 `GET http://localhost:8000/health` returns `{"status": "ok"}`.
 
+`POST /translate` needs `LLM_API_KEY` in `.env` when the real client is used. Rebuild the API container after changing `.env`.
+
+```bash
+curl -s http://localhost:8000/translate \
+  -H 'content-type: application/json' \
+  -d '{"text":"Tilaus on myöhässä","source_language":"auto","target_language":"en"}'
+```
+
 Secrets stay in `.env`. That file is gitignored. The database password in Compose is for this local stack only.
 
 ## Roadmap
 
 1. **Skeleton.** Done. FastAPI app, settings, Dockerfile, and Compose for the API, Postgres, and Redis. Health check, plus a test that the app boots.
-2. **Model interface.** One interface for the completion call, a fake implementation for tests, and one real client that can target two configured models. `POST /translate` uses the interface. Detection sits in front of the call.
+2. **Model interface.** Done. One interface for the completion call, a fake implementation for tests, and one real client that can target two configured models. `POST /translate` uses the interface. Detection sits in front of the call.
 3. **Postgres.** Persist original text, translation, model name, latency, token count, and estimated cost.
 4. **Redis.** Cache key is model, source language, target language, and text. Short TTL. A hit returns the stored translation and skips the model.
 5. **Metrics.** Prometheus request count, latency histogram, and cost counter, labeled by model. Scrape config in Compose.
