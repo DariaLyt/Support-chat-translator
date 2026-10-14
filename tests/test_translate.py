@@ -4,6 +4,7 @@ import httpx2
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.db import MemoryTranslationStore
 from app.llm.base import CompletionRequest
 from app.llm.fake import FakeLanguageModel
 from app.llm.openai_client import OpenAICompatibleClient
@@ -36,12 +37,14 @@ def _client(
     model: FakeLanguageModel,
     detector: StubDetector | None = None,
     settings: Settings | None = None,
+    store: MemoryTranslationStore | None = None,
 ) -> TestClient:
     return TestClient(
         create_app(
             settings or _settings(),
             language_model=model,
             detector=detector or StubDetector("fi"),
+            store=store or MemoryTranslationStore(),
         )
     )
 
@@ -51,8 +54,9 @@ def test_translate_detects_then_calls_the_configured_model() -> None:
         translation="The order is late", input_tokens=1000, output_tokens=500
     )
     detector = StubDetector("fi")
+    store = MemoryTranslationStore()
 
-    response = _client(model, detector).post(
+    response = _client(model, detector, store=store).post(
         "/translate",
         json={
             "text": "Tilaus on myöhässä",
@@ -78,6 +82,14 @@ def test_translate_detects_then_calls_the_configured_model() -> None:
     assert request.messages[0].content.startswith("You translate customer support")
     assert "order numbers" in request.messages[0].content
     assert "Translate from Finnish to English." in request.messages[1].content
+    saved = store.records[0]
+    assert saved.original_text == "Tilaus on myöhässä"
+    assert saved.translation == "The order is late"
+    assert saved.model == "model-a"
+    assert saved.input_tokens == 1000
+    assert saved.output_tokens == 500
+    assert saved.estimated_cost_usd == 0.0012
+    assert saved.latency_ms == body["latency_ms"]
 
 
 def test_explicit_source_language_skips_detection() -> None:
@@ -140,7 +152,8 @@ def test_same_language_skips_the_model() -> None:
 
 
 def test_unknown_model_is_rejected() -> None:
-    response = _client(FakeLanguageModel()).post(
+    store = MemoryTranslationStore()
+    response = _client(FakeLanguageModel(), store=store).post(
         "/translate",
         json={
             "text": "Hello",
@@ -152,6 +165,7 @@ def test_unknown_model_is_rejected() -> None:
 
     assert response.status_code == 422
     assert "Unknown model" in response.json()["detail"]
+    assert store.records == []
 
 
 def test_undetected_language_is_rejected_before_the_model_call() -> None:
@@ -179,7 +193,13 @@ def test_missing_api_key_does_not_call_the_provider() -> None:
         api_key="",
         http=httpx2.Client(transport=httpx2.MockTransport(handler)),
     )
-    app = create_app(_settings(), language_model=client, detector=StubDetector("fi"))
+    store = MemoryTranslationStore()
+    app = create_app(
+        _settings(),
+        language_model=client,
+        detector=StubDetector("fi"),
+        store=store,
+    )
 
     response = TestClient(app).post(
         "/translate",
@@ -188,6 +208,7 @@ def test_missing_api_key_does_not_call_the_provider() -> None:
 
     assert response.status_code == 503
     assert called is False
+    assert store.records == []
 
 
 def test_openai_client_sends_the_selected_model_and_reads_usage() -> None:
@@ -252,7 +273,13 @@ def test_provider_error_becomes_a_bad_gateway() -> None:
             transport=httpx2.MockTransport(handler),
         ),
     )
-    app = create_app(_settings(), language_model=client, detector=StubDetector("fi"))
+    store = MemoryTranslationStore()
+    app = create_app(
+        _settings(),
+        language_model=client,
+        detector=StubDetector("fi"),
+        store=store,
+    )
 
     response = TestClient(app).post(
         "/translate",
@@ -260,6 +287,7 @@ def test_provider_error_becomes_a_bad_gateway() -> None:
     )
 
     assert response.status_code == 502
+    assert store.records == []
     assert response.json()["detail"] == "Model request failed with status 429"
 
 

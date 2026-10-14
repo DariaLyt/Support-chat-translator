@@ -6,9 +6,9 @@ The scorecard is three numbers: whether the meaning survived, the latency, and t
 
 ## Status
 
-`POST /translate` detects the language, calls the model through one interface, and returns the translation with token counts and estimated cost. Tests use a fake model, so CI does not call a provider. `cached` stays false until Redis is wired. The API, Postgres, and Redis still start with Docker Compose, and GitHub Actions runs the tests on every push.
+`POST /translate` detects the language, calls the model through one interface, and stores the call in Postgres. Tests use a fake model, so CI does not call a provider. The database test runs against Postgres, including in GitHub Actions. `cached` stays false until Redis is wired. Docker Compose still starts the API, Postgres, and Redis.
 
-Next: store each call in Postgres.
+Next: cache repeated translations in Redis.
 
 ## What this project includes
 
@@ -129,11 +129,18 @@ curl -s http://localhost:8000/translate \
 
 Secrets stay in `.env`. That file is gitignored. The database password in Compose is for this local stack only.
 
+A successful `POST /translate` inserts one row. Read the latest rows with:
+
+```bash
+docker compose exec postgres psql -U translator -d translator \
+  -c "select original_text, translation, model, latency_ms, input_tokens, output_tokens, estimated_cost_usd from translations order by id desc limit 5;"
+```
+
 ## Roadmap
 
 1. **Skeleton.** Done. FastAPI app, settings, Dockerfile, and Compose for the API, Postgres, and Redis. Health check, plus a test that the app boots.
 2. **Model interface.** Done. One interface for the completion call, a fake implementation for tests, and one real client that can target two configured models. `POST /translate` uses the interface. Detection sits in front of the call.
-3. **Postgres.** Persist original text, translation, model name, latency, token count, and estimated cost.
+3. **Postgres.** Done. Each successful call stores the original text, the translation, the source and target languages, the model name, latency, input and output token counts, and estimated cost.
 4. **Redis.** Cache key is model, source language, target language, and text. Short TTL. A hit returns the stored translation and skips the model.
 5. **Metrics.** Prometheus request count, latency histogram, and cost counter, labeled by model. Scrape config in Compose.
 6. **Labeled messages.** About 30 hand-written messages with reference translations and the strings that must not change.
