@@ -8,7 +8,7 @@ The scorecard is three numbers: whether the meaning survived, the latency, and t
 
 `POST /translate` detects the language, calls the model through one interface, stores the call in Postgres, and caches the translation in Redis. Prometheus counts requests, latency, and estimated cost for each model. A repeated sentence within the cache window skips the model. Tests use a fake model, so CI does not call a provider. The database test runs against Postgres and the cache test runs against Redis, including in GitHub Actions. Docker Compose starts the API, Postgres, Redis, and Prometheus.
 
-Next: score the labeled messages on meaning, latency, and cost.
+Next: run `python -m eval.score` with `LLM_API_KEY` set. That command fills the comparison table below.
 
 ## What this project includes
 
@@ -72,9 +72,9 @@ That figure is an estimate from token counts and the price table. It is the numb
 
 Each labeled message is in `eval/messages.json`. There are 30 messages written for this repo, in Finnish, English, and a mix of both. The set includes an order number, a street address, an emoji, a very short message, and a rude one. Each row has the original text, a reference translation, the facts that must survive, and the protected strings that must come back character for character. Protected strings are order numbers, street addresses, amounts, door codes, and emoji.
 
-Meaning is a pass or fail per message. A translation passes when every required fact is present and every protected string is unchanged. The quality number in the comparison table is the share of the 30 messages that pass. The evaluation script that fills the table is the next step.
+Meaning is a pass or fail per message. A translation passes when every required fact is present and every protected string is unchanged. The quality number in the comparison table is the share of the 30 messages that pass.
 
-Latency is the median and the 95th percentile of the recorded call times. Cost is the mean and the total estimated cost across the same run. Both come from the rows the API writes, so the table matches what Postgres stored.
+`python -m eval.score` runs both configured models on all 30 messages. It skips the Redis cache, so each call is measured, then stores the same fields the API stores. Latency is the median and the 95th percentile of those call times. Cost is the mean and the total estimated cost. The command writes the table below.
 
 | Model | Meaning | Median latency | p95 latency | Mean cost | Total cost |
 | --- | --- | --- | --- | --- | --- |
@@ -127,6 +127,14 @@ curl -s http://localhost:8000/translate \
 
 Secrets stay in `.env`. That file is gitignored. The database password in Compose is for this local stack only.
 
+Score both models and write the comparison table in this README:
+
+```bash
+python -m eval.score
+```
+
+Postgres must be running. The command reads `LLM_API_KEY` from `.env`.
+
 A successful `POST /translate` inserts one row. Read the latest rows with:
 
 ```bash
@@ -160,5 +168,5 @@ With the stack running, open [http://localhost:9090](http://localhost:9090) and 
 4. **Redis.** Done. The cache key is a hash of the model, source language, target language, and text. The TTL is one hour by default. A hit returns the stored translation and skips the model.
 5. **Metrics.** Done. Prometheus request count, latency histogram, and cost counter, labeled by model. Scrape config in Compose.
 6. **Labeled messages.** Done. About 30 hand-written messages with reference translations and the strings that must not change.
-7. **Evaluation.** Run both models on those messages. Score meaning, latency, and cost. Write the comparison table into this README.
+7. **Evaluation.** Done. `python -m eval.score` runs both models, scores meaning, latency, and cost, and writes the comparison table into this README.
 8. **CI.** Done. GitHub Actions runs the tests on every push.
