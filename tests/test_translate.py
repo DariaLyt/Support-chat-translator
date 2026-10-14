@@ -3,6 +3,7 @@ import json
 import httpx2
 from fastapi.testclient import TestClient
 
+from app.cache import MemoryTranslationCache
 from app.config import Settings
 from app.db import MemoryTranslationStore
 from app.llm.base import CompletionRequest
@@ -38,6 +39,7 @@ def _client(
     detector: StubDetector | None = None,
     settings: Settings | None = None,
     store: MemoryTranslationStore | None = None,
+    cache: MemoryTranslationCache | None = None,
 ) -> TestClient:
     return TestClient(
         create_app(
@@ -45,6 +47,7 @@ def _client(
             language_model=model,
             detector=detector or StubDetector("fi"),
             store=store or MemoryTranslationStore(),
+            cache=cache or MemoryTranslationCache(),
         )
     )
 
@@ -90,6 +93,52 @@ def test_translate_detects_then_calls_the_configured_model() -> None:
     assert saved.output_tokens == 500
     assert saved.estimated_cost_usd == 0.0012
     assert saved.latency_ms == body["latency_ms"]
+
+
+def test_repeat_call_skips_the_model() -> None:
+    model = FakeLanguageModel(
+        translation="The order is late", input_tokens=1000, output_tokens=500
+    )
+    cache = MemoryTranslationCache()
+    store = MemoryTranslationStore()
+    client = _client(model, StubDetector("fi"), store=store, cache=cache)
+    payload = {
+        "text": "Tilaus on myöhässä",
+        "source_language": "fi",
+        "target_language": "en",
+    }
+
+    first = client.post("/translate", json=payload)
+    second = client.post("/translate", json=payload)
+
+    assert first.status_code == 200
+    assert first.json()["cached"] is False
+    assert first.json()["input_tokens"] == 1000
+    assert second.status_code == 200
+    assert second.json()["cached"] is True
+    assert second.json()["translation"] == "The order is late"
+    assert second.json()["input_tokens"] == 0
+    assert second.json()["output_tokens"] == 0
+    assert second.json()["estimated_cost_usd"] == 0.0
+    assert len(model.requests) == 1
+    assert list(cache.ttls.values()) == [3600]
+    assert store.records[1].cached is True
+    assert store.records[1].input_tokens == 0
+
+
+def test_a_different_model_is_translated_again() -> None:
+    model = FakeLanguageModel(translation="Hei")
+    cache = MemoryTranslationCache()
+    client = _client(model, cache=cache)
+    body = {"text": "Hello", "source_language": "en", "target_language": "fi"}
+
+    first = client.post("/translate", json=body)
+    second = client.post("/translate", json={**body, "model": "model-b"})
+
+    assert first.json()["cached"] is False
+    assert second.json()["cached"] is False
+    assert second.json()["model"] == "model-b"
+    assert len(model.requests) == 2
 
 
 def test_explicit_source_language_skips_detection() -> None:
@@ -199,6 +248,7 @@ def test_missing_api_key_does_not_call_the_provider() -> None:
         language_model=client,
         detector=StubDetector("fi"),
         store=store,
+        cache=MemoryTranslationCache(),
     )
 
     response = TestClient(app).post(
@@ -279,6 +329,7 @@ def test_provider_error_becomes_a_bad_gateway() -> None:
         language_model=client,
         detector=StubDetector("fi"),
         store=store,
+        cache=MemoryTranslationCache(),
     )
 
     response = TestClient(app).post(

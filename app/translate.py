@@ -3,6 +3,7 @@
 import time
 from dataclasses import dataclass
 
+from app.cache import TranslationCache, cache_key
 from app.config import Settings
 from app.detection import LANGUAGE_NAMES, LanguageDetectorProtocol
 from app.llm.base import (
@@ -50,6 +51,7 @@ def translate_message(
     settings: Settings,
     language_model: LanguageModel,
     detector: LanguageDetectorProtocol,
+    cache: TranslationCache,
 ) -> Translation:
     started = time.perf_counter()
     price = _select_price(settings, model_name)
@@ -73,6 +75,22 @@ def translate_message(
             input_tokens=0,
             output_tokens=0,
             estimated_cost_usd=0.0,
+            cached=False,
+        )
+
+    key = cache_key(price.name, source_language, target_language, text)
+    cached_translation = cache.get(key)
+    if cached_translation is not None:
+        return _result(
+            started=started,
+            source_language=source_language,
+            target_language=target_language,
+            translation=cached_translation,
+            model=price.name,
+            input_tokens=0,
+            output_tokens=0,
+            estimated_cost_usd=0.0,
+            cached=True,
         )
 
     try:
@@ -87,6 +105,7 @@ def translate_message(
     except ModelError as exc:
         raise TranslationError(str(exc), 502) from exc
 
+    cache.set(key, completion.text, settings.cache_ttl_seconds)
     return _result(
         started=started,
         source_language=source_language,
@@ -98,6 +117,7 @@ def translate_message(
         estimated_cost_usd=estimate_cost_usd(
             price, completion.input_tokens, completion.output_tokens
         ),
+        cached=False,
     )
 
 
@@ -137,6 +157,7 @@ def _result(
     input_tokens: int,
     output_tokens: int,
     estimated_cost_usd: float,
+    cached: bool,
 ) -> Translation:
     elapsed_ms = round((time.perf_counter() - started) * 1000)
     return Translation(
@@ -148,5 +169,5 @@ def _result(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         estimated_cost_usd=estimated_cost_usd,
-        cached=False,
+        cached=cached,
     )

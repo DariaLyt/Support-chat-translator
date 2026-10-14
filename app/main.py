@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.cache import RedisTranslationCache, TranslationCache
 from app.config import Settings, get_settings
 from app.db import PostgresTranslationStore, TranslationRecord, TranslationStore
 from app.detection import LinguaDetector, LanguageDetectorProtocol
@@ -59,6 +60,7 @@ def create_app(
     language_model: LanguageModel | None = None,
     detector: LanguageDetectorProtocol | None = None,
     store: TranslationStore | None = None,
+    cache: TranslationCache | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     language_model = language_model or OpenAICompatibleClient(
@@ -67,6 +69,7 @@ def create_app(
     )
     detector = detector or LinguaDetector()
     store = store or PostgresTranslationStore(settings.database_url)
+    cache = cache or RedisTranslationCache(settings.redis_url)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -77,6 +80,7 @@ def create_app(
     app.state.settings = settings
     app.state.language_model = language_model
     app.state.store = store
+    app.state.cache = cache
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
@@ -93,6 +97,7 @@ def create_app(
                 settings=settings,
                 language_model=language_model,
                 detector=detector,
+                cache=cache,
             )
         except TranslationError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc

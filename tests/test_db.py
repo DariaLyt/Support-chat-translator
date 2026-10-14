@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from app.cache import MemoryTranslationCache
 from app.config import Settings
 from app.db import PostgresTranslationStore
 from app.llm.fake import FakeLanguageModel
@@ -33,6 +34,7 @@ def test_translate_is_stored_in_postgres() -> None:
         language_model=model,
         detector=_Finnish(),
         store=store,
+        cache=MemoryTranslationCache(),
     )
 
     try:

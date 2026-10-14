@@ -6,9 +6,9 @@ The scorecard is three numbers: whether the meaning survived, the latency, and t
 
 ## Status
 
-`POST /translate` detects the language, calls the model through one interface, and stores the call in Postgres. Tests use a fake model, so CI does not call a provider. The database test runs against Postgres, including in GitHub Actions. `cached` stays false until Redis is wired. Docker Compose still starts the API, Postgres, and Redis.
+`POST /translate` detects the language, calls the model through one interface, stores the call in Postgres, and caches the translation in Redis. A repeated sentence within the cache window skips the model. Tests use a fake model, so CI does not call a provider. The database test runs against Postgres and the cache test runs against Redis, including in GitHub Actions. Docker Compose still starts the API, Postgres, and Redis.
 
-Next: cache repeated translations in Redis.
+Next: Prometheus metrics for request count, latency, and cost per model.
 
 ## What this project includes
 
@@ -54,7 +54,9 @@ Docker Compose is the deployment shown here. Kubernetes stays out of this repo: 
 
 The sample translation above shows the response shape. A live call fills those fields from the model.
 
-If the detected language and the target language are the same, the original text is returned, the model is not called, and the token counts and cost are zero. `cached` is false until the Redis step.
+If the detected language and the target language are the same, the original text is returned, the model is not called, and the token counts and cost are zero.
+
+A second request with the same model, source language, target language, and text, inside `CACHE_TTL_SECONDS` (one hour by default), returns the stored translation with `"cached": true` and zero tokens and cost. The model is not called again. The cache key is a hash of those four values. A different model is a separate entry.
 
 ## Cost
 
@@ -133,7 +135,13 @@ A successful `POST /translate` inserts one row. Read the latest rows with:
 
 ```bash
 docker compose exec postgres psql -U translator -d translator \
-  -c "select original_text, translation, model, latency_ms, input_tokens, output_tokens, estimated_cost_usd from translations order by id desc limit 5;"
+  -c "select original_text, translation, model, latency_ms, input_tokens, output_tokens, estimated_cost_usd, cached from translations order by id desc limit 5;"
+```
+
+Cached translations live in Redis under keys that start with `translate:`. List them with:
+
+```bash
+docker compose exec redis redis-cli --scan --pattern 'translate:*'
 ```
 
 ## Roadmap
@@ -141,7 +149,7 @@ docker compose exec postgres psql -U translator -d translator \
 1. **Skeleton.** Done. FastAPI app, settings, Dockerfile, and Compose for the API, Postgres, and Redis. Health check, plus a test that the app boots.
 2. **Model interface.** Done. One interface for the completion call, a fake implementation for tests, and one real client that can target two configured models. `POST /translate` uses the interface. Detection sits in front of the call.
 3. **Postgres.** Done. Each successful call stores the original text, the translation, the source and target languages, the model name, latency, input and output token counts, and estimated cost.
-4. **Redis.** Cache key is model, source language, target language, and text. Short TTL. A hit returns the stored translation and skips the model.
+4. **Redis.** Done. The cache key is a hash of the model, source language, target language, and text. The TTL is one hour by default. A hit returns the stored translation and skips the model.
 5. **Metrics.** Prometheus request count, latency histogram, and cost counter, labeled by model. Scrape config in Compose.
 6. **Labeled messages.** About 30 hand-written messages with reference translations and the strings that must not change.
 7. **Evaluation.** Run both models on those messages. Score meaning, latency, and cost. Write the comparison table into this README.
